@@ -1,48 +1,82 @@
-import { injectable, inject } from 'tsyringe';
-
 import AppError from '@shared/errors/AppError';
-import IUsersRepository from '../repositories/IUsersRepository';
-import IHashProvider from '../providers/HashProvider/models/IHashProvider';
 
-import User from '../infra/typeorm/entities/User';
+import FakeStorageProvider from '@shared/container/providers/StorageProvider/fakes/FakeStorageProvider';
+import FakeUsersRepository from '../repositories/fakes/FakeUsersRepository';
 
-interface IRequest {
-  name: string;
-  email: string;
-  password: string;
-}
+import UpdateUserAvatarService from './UpdateUserAvatarService';
 
-@injectable()
-class CreateUserService {
-  constructor(
-    @inject('UsersRepository')
-    private usersRepository: IUsersRepository,
+describe('UpdateUserAvatar', () => {
+  it('should be able to create a new user', async () => {
+    const fakeUsersRepository = new FakeUsersRepository();
+    const fakeStorageProvider = new FakeStorageProvider();
 
-    @inject('HashProvider')
-    private hashProvider: IHashProvider,
-  ) {}
+    const UpdateUserAvatar = new UpdateUserAvatarService(
+      fakeUsersRepository,
+      fakeStorageProvider,
+    );
 
-  public async execute({ name, email, password }: IRequest): Promise<User> {
-    // const usersRepository = getRepository(User);
-
-    const checkUserExists = await this.usersRepository.findByEmail(email);
-
-    if (checkUserExists) {
-      throw new AppError('Email address already used.');
-    }
-
-    const hashedPassword = await this.hashProvider.generateHash(password);
-
-    const user = await this.usersRepository.create({
-      name,
-      email,
-      password: hashedPassword,
+    const user = await fakeUsersRepository.create({
+      name: 'John Doe',
+      email: 'jonhdoe@example.com',
+      password: '123456',
     });
-    // nao precisa ja salva automaticamente encima so usar o await
-    // await this.usersRepository.save(user);
 
-    return user;
-  }
-}
+    await UpdateUserAvatar.execute({
+      user_id: user.id,
+      avatarFilename: 'avatar.jpg',
+    });
 
-export default CreateUserService;
+    expect(user.avatar).toBe('avatar.jpg');
+    // expect(user.provider_id).toBe('111');
+  });
+
+  it('should not be able to update avatar from non existing user', async () => {
+    const fakeUsersRepository = new FakeUsersRepository();
+    const fakeStorageProvider = new FakeStorageProvider();
+
+    const UpdateUserAvatar = new UpdateUserAvatarService(
+      fakeUsersRepository,
+      fakeStorageProvider,
+    );
+
+    expect(
+      UpdateUserAvatar.execute({
+        user_id: 'non-existing-user',
+        avatarFilename: 'avatar.jpg',
+      }),
+    ).rejects.toBeInstanceOf(AppError);
+  });
+
+  it('should delete old avatar when updating new one', async () => {
+    const fakeUsersRepository = new FakeUsersRepository();
+    const fakeStorageProvider = new FakeStorageProvider();
+
+    const deleteFile = jest.spyOn(fakeStorageProvider, 'deleteFile');
+
+    const UpdateUserAvatar = new UpdateUserAvatarService(
+      fakeUsersRepository,
+      fakeStorageProvider,
+    );
+
+    const user = await fakeUsersRepository.create({
+      name: 'John Doe',
+      email: 'jonhdoe@example.com',
+      password: '123456',
+    });
+
+    await UpdateUserAvatar.execute({
+      user_id: user.id,
+      avatarFilename: 'avatar.jpg',
+    });
+
+    await UpdateUserAvatar.execute({
+      user_id: user.id,
+      avatarFilename: 'avatar2.jpg',
+    });
+
+    expect(deleteFile).toHaveBeenCalledWith('avatar.jpg');
+
+    expect(user.avatar).toBe('avatar2.jpg');
+    // expect(user.provider_id).toBe('111');
+  });
+});
